@@ -3,32 +3,31 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
-	"os"
+	"net"
 )
 
-func getLinesChannel(f io.ReadCloser) <-chan string {
+func getLinesChannel(conn net.Conn) <-chan string {
 
 	out := make(chan string, 1)
 
 	go func() {
 
-		defer f.Close()
+		defer conn.Close()
 
 		defer close(out)
 
 		current_line := ""
 
 		for {
-			
+
 			// reads messages in 8 bytes chunk
 			data := make([]byte, 8)
 
-			n, err := f.Read(data)
+			n, err := conn.Read(data)
 
 			if n != 0 {
 				data = data[:n]
-					
+
 				// check if the 8 byte chunk has \n or end of line or next line, they are converted into parts
 				if i := bytes.IndexByte(data, '\n'); i != -1 {
 					current_line += string(data[:i])
@@ -41,9 +40,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 			}
 
 			if err != nil {
-				if err != io.EOF {
-					fmt.Println(err) 
-				}
+
 				break
 			}
 
@@ -55,20 +52,39 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 }
 
 func main() {
-	
-	// open file 
-	file, err := os.Open("messages.txt")
+
+	// listener on tcp port 42069
+	listener, err := net.Listen("tcp", ":42069")
+
 	if err != nil {
-		fmt.Println(err)
+
+		fmt.Println("error listening on port 42069...")
+		return
 	}
-	
-	
-	lines := getLinesChannel(file)
 
-	// prints the messages that is read as 8 byte chunk
-	for line := range lines {
-		fmt.Printf("read: %s\n", line)
+	// defer will make sure when program exits it closes listener
+	defer listener.Close()
 
+	fmt.Println("Server Listening in port 42069 \n\n")
+
+	for {
+
+		conn, err := listener.Accept()
+
+		if err != nil {
+
+			fmt.Println("Error on establishing connection....")
+			continue
+		}
+
+		fmt.Println("Connection has been established...")
+
+		// prints the messages that is read as 8 byte chunk
+		for line := range getLinesChannel(conn) {
+
+			fmt.Printf("read: %s\n", line)
+
+		}
 	}
 
 }
