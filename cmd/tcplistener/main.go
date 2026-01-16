@@ -65,7 +65,7 @@ func main() {
 	// defer will make sure when program exits it closes listener
 	defer listener.Close()
 
-	fmt.Println("Server Listening in port 42069 \n\n")
+	fmt.Println("Server Listening in port 42069")
 
 	for {
 
@@ -82,7 +82,7 @@ func main() {
 		// prints the messages that is read as 8 byte chunk
 		for line := range getLinesChannel(conn) {
 
-			fmt.Printf("read: %s\n", line)
+			fmt.Printf("%s\n", line)
 
 		}
 	}
