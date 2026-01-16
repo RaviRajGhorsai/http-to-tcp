@@ -1,10 +1,16 @@
 package request
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"strings"
-	"unicode"
+)
+
+type parserState string
+
+const (
+	StateInit parserState = "init"
+	StateDone parserState = "done"
 )
 
 type RequestLine struct {
@@ -15,98 +21,156 @@ type RequestLine struct {
 
 type Request struct {
 	RequestLine RequestLine
+	state       parserState
 }
 
 var ERROR_BAD_START_LINE = fmt.Errorf("bad start line")
-var SEPARATOR = "\r\n"
+var SEPARATOR = []byte("\r\n")
 
-func validateStartLine(data []string) ([]string, error) {
+func newRequest() *Request {
+
+	return &Request{
+		state: StateInit,
+	}
+
+}
+
+func validateStartLine(data [][]byte) error {
 
 	// validate http part
-	httpParts := strings.Split(data[2], "/")
 
-	if len(httpParts) != 2 || httpParts[0] != "HTTP" || httpParts[1] != "1.1" {
-		return nil, ERROR_BAD_START_LINE
+	httpParts := bytes.Split(data[2], []byte("/"))
+
+	if len(httpParts) != 2 || !bytes.Equal(httpParts[0], []byte("HTTP")) || !bytes.Equal(httpParts[1], []byte("1.1")) {
+		return ERROR_BAD_START_LINE
 	}
 
 	// validate method part
-	for _, r := range data[0] {
-		if !unicode.IsUpper(r) {
-			return nil, ERROR_BAD_START_LINE
+	for _, b := range data[0] {
+		if b < 'A' || b > 'Z' {
+			return ERROR_BAD_START_LINE
 		}
-
 	}
 
 	// validate target part
 	requestTarget := data[1]
 
 	if len(requestTarget) == 0 || requestTarget[0] != '/' {
-		return nil, ERROR_BAD_START_LINE
+		return ERROR_BAD_START_LINE
 	}
 
-	return data, nil
+	return nil
 
 }
 
-func parseRequestLine(b string) (*RequestLine, string, error) {
+func parseRequestLine(b []byte) (*RequestLine, int, error) {
 
 	// finds the index where the SEPARATOR is present
-	before, after, ok := strings.Cut(b, SEPARATOR)
-	if !ok {
-
-		return nil, b, nil
+	index := bytes.Index(b, SEPARATOR)
+	if index == -1 {
+		return nil, 0, nil
 	}
 
-	// save the starting line (GET / HTTP/1.1)
-	startLine := before
-	restOfMsg := after
+	startLine := b[:index]
+	read := index + len(SEPARATOR)
 
 	// again speparate startline by space separator
-	parts := strings.Split(startLine, " ")
+	parts := bytes.Split(startLine, []byte(" "))
 
 	if len(parts) != 3 {
 
-		return nil, restOfMsg, ERROR_BAD_START_LINE
+		return nil, 0, ERROR_BAD_START_LINE
 
 	}
 
-	var err error
-	parts, err = validateStartLine(parts)
+	err := validateStartLine(parts)
 
 	if err != nil {
-		return nil, restOfMsg, err
+		return nil, 0, err
 
 	}
 
-	httppart := strings.Split(parts[2], "/")
+	httppart := bytes.Split(parts[2], []byte("/"))
 
 	return &RequestLine{
-		Method:        parts[0],
-		RequestTarget: parts[1],
-		HttpVersion:   httppart[1],
-	}, restOfMsg, nil
+		Method:        string(parts[0]),
+		RequestTarget: string(parts[1]),
+		HttpVersion:   string(httppart[1]),
+	}, read, nil
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+
+	read := 0
+outer:
+	for {
+		switch r.state {
+		case StateInit:
+
+			// we parse the mesasge that we got and return as requestLine, no. of byte read
+			requestLine, n, err := parseRequestLine(data[read:])
+			if err != nil {
+				return 0, err
+			}
+
+			if n == 0 {
+				break outer
+			}
+			
+			// we save the successfully read line
+			r.RequestLine = *requestLine
+			
+			// then increase read buffer/size
+			read += n
+			
+			r.state = StateDone
+
+		case StateDone:
+			break outer
+
+		}
+	}
+	return read, nil
+}
+
+func (r *Request) done() bool {
+	return r.state == StateDone
+
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
-	data, err := io.ReadAll(reader)
+	request := newRequest()
+	
+	// initialize msg byte length as 0
+	buf := make([]byte, 1024)
+	bufLen := 0
 
-	if err != nil {
+	for !request.done() {
+		
+		// n == total byte size of message
+		n, err := reader.Read(buf[bufLen:])
+		if err != nil {
 
-		return nil, fmt.Errorf("unable to io.ReadAll: %w", err)
+			return nil, err
+
+		}
+
+		// set buffer length as total message length
+		bufLen += n
+		
+		// eandN is the no. of bytes read by parser
+		readN, err := request.parse(buf[:bufLen])
+		if err != nil {
+			return nil, err
+
+		}
+
+		// this copies the rest not read message and ommits the read message
+		copy(buf, buf[readN:bufLen])
+		bufLen -= readN
 
 	}
 
-	str := string(data)
-	requestLine, _, err := parseRequestLine(str)
-	if err != nil {
-		return nil, err
-	}
-	if requestLine == nil {
-		return nil, fmt.Errorf("incomplete request line")
-	}
-
-	return &Request{
-		RequestLine: *requestLine,
-	}, err
+	return request, nil
 }
