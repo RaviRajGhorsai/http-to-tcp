@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
+	headers "htttpfromtcp/internal/header"
 	"htttpfromtcp/internal/request"
 	"htttpfromtcp/internal/response"
 	"htttpfromtcp/internal/server"
@@ -55,6 +57,17 @@ func respond500() []byte {
 </html>`)
 }
 
+func toStr(bytes []byte) string {
+	out := ""
+
+	for _, b := range bytes {
+		out += fmt.Sprintf("%02x", b)
+	}
+
+	return out
+
+}
+
 func main() {
 	s, err := server.Serve(port, func(w *response.Writer, req *request.Request) {
 
@@ -74,7 +87,7 @@ func main() {
 			status = response.StatusInternalServerError
 
 			// Chunked Encoding,  using httpbin that sends chunked data
-		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/stream") {
+		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
 
 			target := req.RequestLine.RequestTarget
 			res, err := http.Get("https://httpbin.org/" + target[len("/httpbin/"):])
@@ -91,8 +104,12 @@ func main() {
 				h.Delete("Content-Length")
 				h.Set("Transfer-Encoding", "chunked")
 				h.Replace("Content-Type", "text/plain")
+				h.Set("Trailer", "X-Content-SHA256")
+				h.Set("Trailer", "X-Content-Length")
 
 				w.WriteHeaders(h)
+
+				fullBody := []byte{}
 
 				for {
 
@@ -102,12 +119,25 @@ func main() {
 						break
 					}
 
+					fullBody = append(fullBody, data[:n]...)
+
 					w.WriteBody([]byte(fmt.Sprintf("%x\r\n", n)))
 					w.WriteBody(data[:n])
 					w.WriteBody([]byte("\r\n"))
+
 				}
 
 				w.WriteBody([]byte("0\r\n\r\n"))
+
+				trailer := headers.NewHeaders()
+
+				out := sha256.Sum256(fullBody)
+
+				trailer.Set("X-Content-SHA256", toStr(out[:]))
+				trailer.Set("X-Content-Length", fmt.Sprintf("%d", len(fullBody)))
+
+				w.WriteBody([]byte("0\r\n"))
+				w.WriteHeaders(trailer)
 
 				// Loggings only
 				fmt.Printf("Request line:\n")
