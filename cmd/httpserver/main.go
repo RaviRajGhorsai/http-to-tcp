@@ -6,8 +6,10 @@ import (
 	"htttpfromtcp/internal/response"
 	"htttpfromtcp/internal/server"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -59,7 +61,7 @@ func main() {
 		h := response.GetDefaultHeaders(0)
 		body := respond200()
 		status := response.StatusOK
-		
+
 		// filter the request target and respond accordingly (later we can add find functionality accordingly)
 		if req.RequestLine.RequestTarget == "/yourproblem" {
 
@@ -70,17 +72,88 @@ func main() {
 
 			body = respond500()
 			status = response.StatusInternalServerError
+
+			// Chunked Encoding,  using httpbin that sends chunked data
+		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/stream") {
+
+			target := req.RequestLine.RequestTarget
+			res, err := http.Get("https://httpbin.org/" + target[len("/httpbin/"):])
+
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				body = respond400()
+				status = response.StatusBadRequest
+
+			} else {
+
+				w.WriteStatusLine(response.StatusOK)
+
+				h.Delete("Content-Length")
+				h.Set("Transfer-Encoding", "chunked")
+				h.Replace("Content-Type", "text/plain")
+
+				w.WriteHeaders(h)
+
+				for {
+
+					data := make([]byte, 32)
+					n, err := res.Body.Read(data)
+					if err != nil {
+						break
+					}
+
+					w.WriteBody([]byte(fmt.Sprintf("%x\r\n", n)))
+					w.WriteBody(data[:n])
+					w.WriteBody([]byte("\r\n"))
+				}
+
+				w.WriteBody([]byte("0\r\n\r\n"))
+
+				// Loggings only
+				fmt.Printf("Request line:\n")
+				fmt.Printf("- Method: %s\n", req.RequestLine.Method)
+				fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
+				fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
+
+				fmt.Println("Headers:")
+				req.Headers.ForEach(func(n, v string) {
+
+					fmt.Printf("- %s: %s\n", n, v)
+
+				})
+
+				fmt.Println("Body:")
+				fmt.Printf("%s", req.Body)
+
+				return
+			}
 		}
-		
+
 		// replace content length with actual length of body
 		h.Replace("Content-Length", fmt.Sprintf("%d", len(body)))
-		
+		h.Replace("Content-Type", "text/html")
+
 		// these response must be written in order first statusline, header then body
 		w.WriteStatusLine(status)
 		w.WriteHeaders(h)
 		w.WriteBody(body)
 
-		
+		// Loggings only
+		fmt.Printf("Request line:\n")
+		fmt.Printf("- Method: %s\n", req.RequestLine.Method)
+		fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
+		fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
+
+		fmt.Println("Headers:")
+		req.Headers.ForEach(func(n, v string) {
+
+			fmt.Printf("- %s: %s\n", n, v)
+
+		})
+
+		fmt.Println("Body:")
+		fmt.Printf("%s", req.Body)
+
 	})
 
 	if err != nil {
