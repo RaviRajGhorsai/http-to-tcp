@@ -86,6 +86,21 @@ func main() {
 			body = respond500()
 			status = response.StatusInternalServerError
 
+		} else if req.RequestLine.RequestTarget == "/video" {
+
+			videoData, err := os.ReadFile("assets/vim.mp4")
+			if err != nil {
+				return
+			}
+
+			h.Replace("Content-Length", fmt.Sprintf("%d", len(videoData)))
+			h.Replace("content-type", "video/mp4")
+
+			w.WriteStatusLine(response.StatusOK)
+			w.WriteHeaders(h)
+			w.WriteBody(videoData)
+
+
 			// Chunked Encoding,  using httpbin that sends chunked data
 		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
 
